@@ -1,11 +1,12 @@
+streamlit
 langchain
+langchain-core
 langchain-community
-langchain-text-splitters
-langchain-google-genai
+langchain-openai
 langchain-chroma
 chromadb
+langchain-cohere
+cohere
 python-dotenv
-streamlit
-pypdf
 pymupdf
 docx2txt
