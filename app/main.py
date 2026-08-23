@@ -490,7 +490,7 @@ st.markdown(
     .main-wrapper {{
         max-width: 1050px;
         margin: 0 auto;
-        padding: 0.05rem 2rem 6rem 2rem;
+        padding: 0 2rem 6rem 2rem;
     }}
 
     .main-title {{
@@ -656,6 +656,7 @@ st.markdown(
         background: #f2f2f2 !important;
         border: 1px solid #dcdcdc !important;
         border-radius: 9px !important;
+        overflow: hidden !important;
 
         box-shadow: none !important;
 
@@ -1139,19 +1140,14 @@ for message in current_messages:
 
     if role == "user":
 
+        safe_question = html.escape(str(content))
+
         st.markdown(
             f"""
             <div class="qa-block">
                 <div class="qa-row">
-
-                    <div class="qa-icon question-icon">
-                        ?
-                    </div>
-
-                    <div class="question-text">
-                        {html.escape(content)}
-                    </div>
-
+                    <div class="qa-icon question-icon">?</div>
+                    <div class="question-text">{safe_question}</div>
                 </div>
             </div>
             """,
@@ -1165,32 +1161,17 @@ for message in current_messages:
 
     else:
 
+        safe_content = html.escape(str(content)).replace("\n", "<br>")
+
         st.markdown(
-            """
+            f"""
             <div class="qa-block">
                 <div class="qa-row">
-
-                    <div class="qa-icon answer-icon">
-                        A
-                    </div>
-
+                    <div class="qa-icon answer-icon">A</div>
                     <div style="flex:1;">
-
-                        <div class="answer-label">
-                            Answer
-                        </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            content
-        )
-
-        st.markdown(
-            """
+                        <div class="answer-label">Answer</div>
+                        <div class="answer-content">{safe_content}</div>
                     </div>
-
                 </div>
             </div>
             """,
@@ -1485,19 +1466,14 @@ if chat_input is not None:
         # DISPLAY QUESTION IMMEDIATELY
         # ====================================================
 
+        safe_question = html.escape(str(question))
+
         st.markdown(
             f"""
             <div class="qa-block">
                 <div class="qa-row">
-
-                    <div class="qa-icon question-icon">
-                        ?
-                    </div>
-
-                    <div class="question-text">
-                        {html.escape(question)}
-                    </div>
-
+                    <div class="qa-icon question-icon">?</div>
+                    <div class="question-text">{safe_question}</div>
                 </div>
             </div>
             """,
@@ -1559,32 +1535,17 @@ if chat_input is not None:
         # DISPLAY ANSWER
         # ====================================================
 
+        safe_answer = html.escape(str(answer)).replace("\n", "<br>")
+
         st.markdown(
-            """
+            f"""
             <div class="qa-block">
                 <div class="qa-row">
-
-                    <div class="qa-icon answer-icon">
-                        A
-                    </div>
-
+                    <div class="qa-icon answer-icon">A</div>
                     <div style="flex:1;">
-
-                        <div class="answer-label">
-                            Answer
-                        </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-        st.markdown(
-            answer
-        )
-
-        st.markdown(
-            """
+                        <div class="answer-label">Answer</div>
+                        <div class="answer-content">{safe_answer}</div>
                     </div>
-
                 </div>
             </div>
             """,
