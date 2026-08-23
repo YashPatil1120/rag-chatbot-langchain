@@ -1,3 +1,4 @@
+import re
 from typing import List
 
 from langchain_core.documents import Document
@@ -14,56 +15,48 @@ compression_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
-            """You are a document relevance extraction system.
+            """You are a document relevance extractor.
 
-You will receive a user question and several document chunks.
+You are given a user question and multiple document chunks.
 
 For EACH document:
 
-1. Extract ONLY information that is directly useful for
-   answering the user's question.
-2. Use ONLY information contained in that document.
-3. Do NOT use outside knowledge.
-4. Do NOT invent facts.
-5. Preserve important:
-   - definitions
-   - explanations
-   - examples
-   - formulas
-   - commands
-   - numbers
-   - conditions
-6. Remove irrelevant information.
-7. If a document does not contain useful information,
-   return exactly:
+- Extract only information directly useful for answering
+  the user's question.
+- Use ONLY information present in that document.
+- Do not add outside knowledge.
+- Do not invent facts.
+- Preserve important definitions, explanations, examples,
+  commands, numbers, formulas and conditions.
+- Remove unrelated information.
+
+If a document is not useful, write:
 
 NOT_RELEVANT
 
-You MUST preserve the document numbering.
-
-Return EXACTLY this structure:
+You MUST use this exact structure:
 
 DOCUMENT 1:
-<relevant information or NOT_RELEVANT>
+<content or NOT_RELEVANT>
 
 DOCUMENT 2:
-<relevant information or NOT_RELEVANT>
+<content or NOT_RELEVANT>
 
 DOCUMENT 3:
-<relevant information or NOT_RELEVANT>
+<content or NOT_RELEVANT>
 
 Continue for every document.
 
-Do not add explanations before or after the results.
+Do not write explanations outside this structure.
 """,
         ),
         (
             "human",
-            """USER QUESTION:
+            """User question:
 
 {question}
 
-DOCUMENTS:
+Documents:
 
 {documents}
 """,
@@ -79,7 +72,7 @@ DOCUMENTS:
 def compress_documents(
     question: str,
     documents: List[Document],
-) -> List[Document]:
+):
 
     if not documents:
         return []
@@ -99,9 +92,9 @@ def compress_documents(
         document_blocks.append(
             f"""DOCUMENT {index}:
 
-{document.page_content}"""
+{document.page_content}
+"""
         )
-
 
     combined_documents = "\n\n---\n\n".join(
         document_blocks
@@ -119,161 +112,130 @@ def compress_documents(
 
 
     # ========================================================
-    # ONE LLM CALL
+    # CALL LLM
     # ========================================================
 
-    response = llm.invoke(
-        messages
-    )
+    try:
 
+        response = llm.invoke(
+            messages
+        )
 
-    compressed_text = (
-        response.text.strip()
-    )
+    except Exception:
 
-
-    if not compressed_text:
+        # Compression should never break RAG.
         return []
 
 
+    compressed_text = (
+        response.content
+        if hasattr(response, "content")
+        else getattr(response, "text", "")
+    )
+
+    if not compressed_text:
+
+        return []
+
+
+    compressed_text = (
+        str(compressed_text)
+        .strip()
+    )
+
+
     # ========================================================
-    # PARSE RESPONSE
+    # PARSE DOCUMENT SECTIONS
     # ========================================================
+
+    pattern = re.compile(
+        r"DOCUMENT\s+(\d+)\s*:\s*(.*?)(?="
+        r"\n\s*DOCUMENT\s+\d+\s*:|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    matches = pattern.findall(
+        compressed_text
+    )
+
+
+    if not matches:
+
+        return []
+
 
     compressed_documents = []
 
 
-    # Normalize line endings
-    compressed_text = (
-        compressed_text
-        .replace("\r\n", "\n")
-        .replace("\r", "\n")
-    )
+    # ========================================================
+    # REBUILD DOCUMENTS
+    # ========================================================
 
-
-    # --------------------------------------------------------
-    # Split by DOCUMENT markers
-    # --------------------------------------------------------
-
-    sections = compressed_text.split(
-        "DOCUMENT "
-    )
-
-
-    for section in sections:
-
-        section = section.strip()
-
-        if not section:
-            continue
-
-
-        lines = section.splitlines()
-
-        if not lines:
-            continue
-
-
-        # ====================================================
-        # EXTRACT DOCUMENT NUMBER
-        # ====================================================
-
-        first_line = lines[0].strip()
-
+    for document_number_text, content in matches:
 
         try:
 
-            number_text = (
-                first_line
-                .split(":", 1)[0]
-                .strip()
-            )
-
             document_number = int(
-                number_text
+                document_number_text
             )
 
-        except (
-            ValueError,
-            IndexError,
+        except ValueError:
+
+            continue
+
+
+        if (
+            document_number < 1
+            or document_number > len(documents)
         ):
 
             continue
 
 
-        # ====================================================
-        # VALIDATE DOCUMENT NUMBER
-        # ====================================================
+        content = content.strip()
 
-        if not (
-            1
-            <= document_number
-            <= len(documents)
+
+        if not content:
+
+            continue
+
+
+        # ----------------------------------------------------
+        # Ignore irrelevant documents
+        # ----------------------------------------------------
+
+        if (
+            content.upper()
+            .strip()
+            == "NOT_RELEVANT"
         ):
 
             continue
 
 
-        # ====================================================
-        # EXTRACT COMPRESSED CONTENT
-        # ====================================================
-
-        content = "\n".join(
-            lines[1:]
-        ).strip()
-
-
-        if not content:
-            continue
-
-
-        # ====================================================
-        # IGNORE IRRELEVANT DOCUMENTS
-        # ====================================================
-
-        if content.upper() == "NOT_RELEVANT":
-            continue
-
-
-        # ====================================================
-        # REMOVE ACCIDENTAL MARKERS
-        # ====================================================
-
-        if content.startswith(":"):
-
-            content = content[1:].strip()
-
-
-        if not content:
-            continue
-
-
-        # ====================================================
-        # PRESERVE ORIGINAL METADATA
-        # ====================================================
+        # ----------------------------------------------------
+        # Preserve original metadata
+        # ----------------------------------------------------
 
         original_document = documents[
             document_number - 1
         ]
 
-
         metadata = (
             original_document.metadata.copy()
         )
 
-
         metadata["compressed"] = True
 
 
-        # ====================================================
-        # CREATE COMPRESSED DOCUMENT
-        # ====================================================
+        # ----------------------------------------------------
+        # Create compressed document
+        # ----------------------------------------------------
 
         compressed_document = Document(
             page_content=content,
             metadata=metadata,
         )
-
 
         compressed_documents.append(
             compressed_document
