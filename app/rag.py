@@ -1,0 +1,378 @@
+from langchain_core.prompts import ChatPromptTemplate
+
+from llm import llm
+
+from retriever import get_mmr_retriever
+
+from redundant_filter import (
+    remove_redundant_documents,
+)
+
+from reranker import (
+    rerank_documents,
+)
+
+from contextual_compression import (
+    compress_documents,
+)
+
+from reorder import (
+    reorder_documents,
+)
+
+
+# ============================================================
+# CONFIGURATION
+# ============================================================
+
+USE_CONTEXTUAL_COMPRESSION = True
+
+MMR_K = 15
+MMR_FETCH_K = 30
+MMR_LAMBDA = 0.5
+
+REDUNDANCY_THRESHOLD = 0.90
+
+RERANK_TOP_N = 5
+
+
+# ============================================================
+# QUESTION REWRITING PROMPT
+# ============================================================
+
+rewrite_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a question rewriting assistant.
+
+Convert the user's latest question into a standalone
+question that can be understood without the previous
+conversation.
+
+Use the conversation history only when necessary.
+
+If the question is already standalone, return it unchanged.
+
+Return ONLY the rewritten question.
+Do not explain anything.
+""",
+        ),
+        (
+            "human",
+            """Conversation history:
+
+{chat_history}
+
+Latest question:
+
+{question}
+""",
+        ),
+    ]
+)
+
+
+# ============================================================
+# FINAL RAG PROMPT
+# ============================================================
+
+rag_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """You are a helpful document question-answering
+assistant.
+
+Answer the user's question using ONLY the provided
+document context.
+
+Rules:
+
+1. Do not use outside knowledge.
+2. Do not invent facts.
+3. If the answer cannot be found in the context,
+   say exactly:
+
+"I don't know based on the provided document."
+
+4. Keep the answer clear and concise.
+5. If multiple documents contain relevant information,
+   combine them carefully.
+6. Preserve important technical details, formulas,
+   commands, numbers, and definitions.
+
+Context:
+
+{context}
+""",
+        ),
+        (
+            "human",
+            "{question}",
+        ),
+    ]
+)
+
+
+# ============================================================
+# ASK QUESTION
+# ============================================================
+
+def ask_question(
+    question: str,
+    chat_history=None,
+    document_id=None,
+):
+
+    # ========================================================
+    # 1. NORMALIZE HISTORY
+    # ========================================================
+
+    if chat_history is None:
+
+        chat_history = []
+
+
+    # ========================================================
+    # 2. BUILD HISTORY TEXT
+    # ========================================================
+
+    history_text = ""
+
+
+    for message in chat_history:
+
+        role = message.get(
+            "role",
+            "",
+        )
+
+        content = message.get(
+            "content",
+            "",
+        )
+
+        history_text += (
+            f"{role}: {content}\n"
+        )
+
+
+    # ========================================================
+    # 3. QUESTION REWRITING
+    # ========================================================
+
+    if chat_history:
+
+        rewrite_messages = (
+            rewrite_prompt.format_messages(
+                chat_history=history_text,
+                question=question,
+            )
+        )
+
+
+        rewritten_response = llm.invoke(
+            rewrite_messages
+        )
+
+
+        standalone_question = (
+            rewritten_response.text.strip()
+        )
+
+
+        if not standalone_question:
+
+            standalone_question = question
+
+    else:
+
+        standalone_question = question
+
+
+    # ========================================================
+    # 4. MMR RETRIEVAL
+    # ========================================================
+
+    retriever = get_mmr_retriever(
+
+        k=MMR_K,
+
+        fetch_k=MMR_FETCH_K,
+
+        lambda_mult=MMR_LAMBDA,
+
+        document_id=document_id,
+
+    )
+
+
+    documents = retriever.invoke(
+        standalone_question
+    )
+
+
+    # ========================================================
+    # 5. NO DOCUMENTS
+    # ========================================================
+
+    if not documents:
+
+        return (
+            None,
+            [],
+            standalone_question,
+        )
+
+
+    # ========================================================
+    # 6. REDUNDANCY FILTER
+    # ========================================================
+
+    documents = (
+        remove_redundant_documents(
+            documents,
+            similarity_threshold=(
+                REDUNDANCY_THRESHOLD
+            ),
+        )
+    )
+
+
+    if not documents:
+
+        return (
+            None,
+            [],
+            standalone_question,
+        )
+
+
+    # ========================================================
+    # 7. COHERE RERANKING
+    # ========================================================
+
+    documents = rerank_documents(
+
+        question=standalone_question,
+
+        documents=documents,
+
+        top_n=RERANK_TOP_N,
+
+    )
+
+
+    if not documents:
+
+        return (
+            None,
+            [],
+            standalone_question,
+        )
+
+
+    # ========================================================
+    # 8. CONTEXTUAL COMPRESSION
+    # ========================================================
+
+    if USE_CONTEXTUAL_COMPRESSION:
+
+        documents = compress_documents(
+
+            question=standalone_question,
+
+            documents=documents,
+
+        )
+
+
+        if not documents:
+
+            return (
+                None,
+                [],
+                standalone_question,
+            )
+
+
+    # ========================================================
+    # 9. LONG-CONTEXT REORDERING
+    # ========================================================
+
+    documents = reorder_documents(
+        documents
+    )
+
+
+    if not documents:
+
+        return (
+            None,
+            [],
+            standalone_question,
+        )
+
+
+    # ========================================================
+    # 10. BUILD FINAL CONTEXT
+    # ========================================================
+
+    context_parts = []
+
+
+    for index, document in enumerate(
+        documents,
+        start=1,
+    ):
+
+        context_parts.append(
+
+            f"""Document {index}:
+
+{document.page_content}"""
+
+        )
+
+
+    context = "\n\n---\n\n".join(
+        context_parts
+    )
+
+
+    # ========================================================
+    # 11. FINAL RAG PROMPT
+    # ========================================================
+
+    messages = rag_prompt.format_messages(
+
+        context=context,
+
+        question=standalone_question,
+
+    )
+
+
+    # ========================================================
+    # 12. FINAL LLM ANSWER
+    # ========================================================
+
+    response = llm.invoke(
+        messages
+    )
+
+
+    # ========================================================
+    # 13. RETURN
+    # ========================================================
+
+    return (
+
+        response,
+
+        documents,
+
+        standalone_question,
+
+    )

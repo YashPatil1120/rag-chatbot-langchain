@@ -1,0 +1,43 @@
+# Virtual environment
+venv/
+.venv/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+# Local data
+data/
+vectorstore/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Local database/vector store if not intended for Git
+# Uncomment if your vector DB should be rebuilt during deployment
+# chroma/
+# data/chroma/
+
+# Uploaded documents
+# Uncomment if uploaded documents should remain local
+# data/uploads/
