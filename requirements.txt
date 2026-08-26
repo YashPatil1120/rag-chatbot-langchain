@@ -4,6 +4,7 @@ langchain-core
 langchain-community
 langchain-openai
 langchain-chroma
+langchain-google-genai  
 chromadb
 langchain-cohere
 cohere
