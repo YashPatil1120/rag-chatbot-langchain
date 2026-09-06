@@ -4,10 +4,6 @@ from llm import llm
 
 from retriever import get_mmr_retriever
 
-from redundant_filter import (
-    remove_redundant_documents,
-)
-
 from reranker import (
     rerank_documents,
 )
@@ -26,16 +22,22 @@ from reorder import (
 # ============================================================
 
 # Contextual compression is an optimization layer.
-# If it fails, the original retrieved documents are retained.
+# If it fails, the original reranked documents are retained.
 USE_CONTEXTUAL_COMPRESSION = True
 
+
 # MMR retrieval configuration
+#
+# MMR helps retrieve documents that are both:
+# 1. Relevant to the question
+# 2. Diverse from each other
+#
+# This also reduces the need for a separate
+# redundancy-filtering API call.
 MMR_K = 15
 MMR_FETCH_K = 30
 MMR_LAMBDA = 0.5
 
-# Redundancy filtering
-REDUNDANCY_THRESHOLD = 0.90
 
 # Number of documents retained after Cohere reranking
 RERANK_TOP_N = 5
@@ -252,32 +254,7 @@ def ask_question(
 
 
     # ========================================================
-    # 6. REDUNDANCY FILTER
-    # ========================================================
-
-    documents = remove_redundant_documents(
-        documents,
-        similarity_threshold=(
-            REDUNDANCY_THRESHOLD
-        ),
-    )
-
-
-    # ========================================================
-    # 7. NO DOCUMENTS AFTER REDUNDANCY FILTER
-    # ========================================================
-
-    if not documents:
-
-        return (
-            None,
-            [],
-            standalone_question,
-        )
-
-
-    # ========================================================
-    # 8. COHERE RERANKING
+    # 6. COHERE RERANKING
     # ========================================================
 
     documents = rerank_documents(
@@ -288,7 +265,7 @@ def ask_question(
 
 
     # ========================================================
-    # 9. NO DOCUMENTS AFTER RERANKING
+    # 7. NO DOCUMENTS AFTER RERANKING
     # ========================================================
 
     if not documents:
@@ -301,20 +278,19 @@ def ask_question(
 
 
     # ========================================================
-    # 10. SAVE SUCCESSFULLY RETRIEVED DOCUMENTS
-    # ========================================================
-    #
-    # These documents are our reliable fallback.
-    #
-    # Contextual compression is optional. It should NEVER
-    # cause already-successful retrieval to be discarded.
+    # 8. SAVE SUCCESSFULLY RETRIEVED DOCUMENTS
     # ========================================================
 
+    # These documents are our reliable fallback.
+    #
+    # Contextual compression is optional.
+    # If compression fails, these original reranked
+    # documents will be used.
     retrieved_documents = documents
 
 
     # ========================================================
-    # 11. CONTEXTUAL COMPRESSION
+    # 9. CONTEXTUAL COMPRESSION
     # ========================================================
 
     if USE_CONTEXTUAL_COMPRESSION:
@@ -336,16 +312,15 @@ def ask_question(
 
 
         # ====================================================
-        # 12. COMPRESSION FALLBACK
+        # 10. COMPRESSION FALLBACK
         # ====================================================
-        #
+
         # IMPORTANT:
         #
         # Never return "I don't know" merely because the
         # compression model failed to format its response.
         #
         # Use the original reranked documents instead.
-        # ====================================================
 
         if compressed_documents:
 
@@ -361,7 +336,7 @@ def ask_question(
 
 
     # ========================================================
-    # 13. FINAL SAFETY CHECK
+    # 11. FINAL SAFETY CHECK
     # ========================================================
 
     if not documents:
@@ -376,7 +351,7 @@ def ask_question(
 
 
     # ========================================================
-    # 14. LONG-CONTEXT REORDERING
+    # 12. LONG-CONTEXT REORDERING
     # ========================================================
 
     documents = reorder_documents(
@@ -385,7 +360,7 @@ def ask_question(
 
 
     # ========================================================
-    # 15. FINAL SAFETY CHECK AFTER REORDERING
+    # 13. FINAL SAFETY CHECK AFTER REORDERING
     # ========================================================
 
     if not documents:
@@ -394,7 +369,7 @@ def ask_question(
 
 
     # ========================================================
-    # 16. BUILD FINAL CONTEXT
+    # 14. BUILD FINAL CONTEXT
     # ========================================================
 
     context_parts = []
@@ -421,7 +396,7 @@ def ask_question(
 
 
     # ========================================================
-    # 17. NO USABLE CONTEXT
+    # 15. NO USABLE CONTEXT
     # ========================================================
 
     if not context_parts:
@@ -439,7 +414,7 @@ def ask_question(
 
 
     # ========================================================
-    # 18. CREATE FINAL RAG PROMPT
+    # 16. CREATE FINAL RAG PROMPT
     # ========================================================
 
     messages = rag_prompt.format_messages(
@@ -449,7 +424,7 @@ def ask_question(
 
 
     # ========================================================
-    # 19. FINAL LLM ANSWER
+    # 17. FINAL LLM ANSWER
     # ========================================================
 
     try:
@@ -466,7 +441,7 @@ def ask_question(
 
 
     # ========================================================
-    # 20. RETURN
+    # 18. RETURN
     # ========================================================
 
     return (
